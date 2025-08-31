@@ -127,6 +127,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
         self.logger = create_logger(self.logging_config, config)
+        
+        # Initialize telemetry system
+        from toolkit.telemetry import TelemetryLogger, get_run_name
+        telemetry_config = self.get_conf('telemetry', {})
+        enable_telemetry = telemetry_config.get('enabled', True)
+        
+        if enable_telemetry and self.accelerator.is_main_process:
+            run_name = get_run_name(config)
+            self.telemetry = TelemetryLogger(
+                run_name=run_name,
+                log_dir=telemetry_config.get('log_dir', './logs'),
+                enable_tensorboard=telemetry_config.get('tensorboard', False),
+                enable_wandb=telemetry_config.get('wandb', False)
+            )
+        else:
+            self.telemetry = None
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -677,6 +693,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         self.clean_up_saves()
         self.post_save_hook(file_path)
+        
+        # Log checkpoint save with telemetry
+        if self.telemetry:
+            self.telemetry.log_checkpoint(
+                global_step=step if step is not None else self.step_num,
+                checkpoint_path=file_path,
+                is_best=False  # Could add logic to determine if this is the best checkpoint
+            )
 
         if self.ema is not None:
             self.ema.train()
@@ -698,6 +722,36 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_before_train_loop(self):
         if self.accelerator.is_main_process:
             self.logger.start()
+            
+            # Log training start with telemetry
+            if self.telemetry:
+                from toolkit.telemetry import extract_lora_metadata, extract_model_info, extract_training_info
+                
+                config_snapshot = {
+                    "config_name": self.job.name if hasattr(self.job, 'name') else "unknown",
+                    "process_type": self.__class__.__name__,
+                }
+                
+                lora_metadata = extract_lora_metadata(
+                    self.network_config.__dict__ if self.network_config else {}
+                )
+                
+                model_info = extract_model_info(
+                    self.model_config.__dict__ if self.model_config else {},
+                    self.sd if hasattr(self, 'sd') else None
+                )
+                
+                training_info = extract_training_info(
+                    self.train_config.__dict__ if self.train_config else {}
+                )
+                
+                self.telemetry.log_start(
+                    config=config_snapshot,
+                    lora_config=lora_metadata,
+                    model_info=model_info,
+                    training_info=training_info
+                )
+        
         self.prepare_accelerator()
         
     def sample_step_hook(self, img_num, total_imgs):
@@ -2179,6 +2233,32 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 if self.progress_bar is not None:
                     self.progress_bar.set_postfix_str(prog_bar_string)
+                
+                # Log step metrics with telemetry
+                if self.telemetry and self.accelerator.is_main_process:
+                    # Check for control file changes
+                    control_data = self.telemetry.check_control_file()
+                    if control_data and 'log_every' in control_data:
+                        old_log_every = self.logging_config.log_every
+                        new_log_every = max(5, min(2000, int(control_data['log_every'])))  # Clamp values
+                        if old_log_every != new_log_every:
+                            self.logging_config.log_every = new_log_every
+                            self.telemetry.log_control_change(old_log_every, new_log_every, "dashboard")
+                    
+                    # Log step metrics
+                    step_metrics = {
+                        "train_loss": loss_dict.get("loss", 0.0),
+                        "lr": learning_rate,
+                        "grad_norm": getattr(self, '_last_grad_norm', None),
+                        "samples_per_sec": getattr(self, '_samples_per_sec', None),
+                        "sec_per_step": self.timer.get_time('train_loop') if hasattr(self, 'timer') else None,
+                    }
+                    # Add any additional loss components
+                    for key, value in loss_dict.items():
+                        if key != "loss":
+                            step_metrics[f"loss/{key}"] = value
+                    
+                    self.telemetry.log_step(self.step_num, self.epoch_num, step_metrics)
 
                 # if the batch is a DataLoaderBatchDTO, then we need to clean it up
                 if isinstance(batch, DataLoaderBatchDTO):
@@ -2294,10 +2374,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
+            
+        # Log final epoch with telemetry
+        if self.telemetry and self.accelerator.is_main_process:
+            final_metrics = {"final_step": self.step_num}
+            self.telemetry.log_epoch(self.epoch_num, final_metrics)
+            
         print_acc("")
         if self.accelerator.is_main_process:
             self.save()
             self.logger.finish()
+            
+            # Close telemetry
+            if self.telemetry:
+                self.telemetry.close()
         self.accelerator.end_training()
 
         if self.accelerator.is_main_process:

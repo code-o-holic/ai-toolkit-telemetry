@@ -1941,10 +1941,16 @@ class SDTrainer(BaseSDTrainProcess):
             # fix this for multi params
             if self.train_config.optimizer != 'adafactor':
                 if isinstance(self.params[0], dict):
+                    grad_norm = 0.0
                     for i in range(len(self.params)):
-                        self.accelerator.clip_grad_norm_(self.params[i]['params'], self.train_config.max_grad_norm)
+                        norm = self.accelerator.clip_grad_norm_(self.params[i]['params'], self.train_config.max_grad_norm)
+                        grad_norm += norm.item() ** 2 if norm is not None else 0.0
+                    self._last_grad_norm = grad_norm ** 0.5
                 else:
-                    self.accelerator.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
+                    grad_norm = self.accelerator.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
+                    self._last_grad_norm = grad_norm.item() if grad_norm is not None else None
+            else:
+                self._last_grad_norm = None
             # only step if we are not accumulating
             with self.timer('optimizer_step'):
                 self.optimizer.step()
