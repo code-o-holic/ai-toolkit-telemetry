@@ -15,7 +15,18 @@ from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 import torch.nn.functional as F
 
-from diffusers import QwenImagePipeline, QwenImageTransformer2DModel, AutoencoderKLQwenImage
+try:
+    from diffusers import QwenImagePipeline, QwenImageTransformer2DModel, AutoencoderKLQwenImage
+    QWEN_IMAGE_AVAILABLE = True
+except ImportError:
+    QWEN_IMAGE_AVAILABLE = False
+    # Create dummy classes for type hints
+    class QwenImagePipeline:
+        pass
+    class QwenImageTransformer2DModel:
+        pass
+    class AutoencoderKLQwenImage:
+        pass
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 from tqdm import tqdm
 
@@ -55,6 +66,13 @@ class QwenImageModel(BaseModel):
             noise_scheduler=None,
             **kwargs
     ):
+        if not QWEN_IMAGE_AVAILABLE:
+            raise ImportError(
+                "QwenImagePipeline is not available in your diffusers version. "
+                "Please update diffusers to a version that supports Qwen Image models: "
+                "pip install --upgrade diffusers"
+            )
+        
         super().__init__(
             device,
             model_config,

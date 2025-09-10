@@ -134,7 +134,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         enable_telemetry = telemetry_config.get('enabled', True)
         
         if enable_telemetry and self.accelerator.is_main_process:
-            run_name = get_run_name(config)
+            # prefer the training job's name so logs align with LoRA folder naming
+            run_name = getattr(self.job, 'name', get_run_name(config))
             self.telemetry = TelemetryLogger(
                 run_name=run_name,
                 log_dir=telemetry_config.get('log_dir', './logs'),
@@ -377,6 +378,38 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+
+        # emit telemetry sample event with file paths
+        if self.telemetry and self.accelerator.is_main_process:
+            try:
+                import glob
+                step_tag = f"_{str(step).zfill(9)}" if step is not None else f"_{str(self.step_num).zfill(9)}"
+                sample_dir = os.path.join(self.save_root, 'samples')
+                # collect likely recent files; adjust pattern if needed
+                files = sorted(glob.glob(os.path.join(sample_dir, f"*{step_tag}*.*")))
+                items = []
+                for idx, fpath in enumerate(files):
+                    prompt_text = None
+                    try:
+                        if self.sample_config.samples and idx < len(self.sample_config.samples):
+                            prompt_text = self.sample_config.samples[idx].prompt
+                    except Exception:
+                        pass
+                    items.append({
+                        'prompt_index': idx,
+                        'prompt': prompt_text,
+                        'path': fpath,
+                    })
+                self.telemetry._write_jsonl({
+                    'event': 'sample',
+                    'timestamp': datetime.now().isoformat(),
+                    'time': time.time(),
+                    'global_step': step if step is not None else self.step_num,
+                    'samples_dir': sample_dir,
+                    'items': items,
+                })
+            except Exception:
+                pass
 
         
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
@@ -730,6 +763,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 config_snapshot = {
                     "config_name": self.job.name if hasattr(self.job, 'name') else "unknown",
                     "process_type": self.__class__.__name__,
+                    "save_root": self.save_root,
+                    "samples_dir": os.path.join(self.save_root, 'samples'),
+                    "sample_prompts": [s.prompt for s in (self.sample_config.samples or [])],
+                    "sample_every": getattr(self.sample_config, 'sample_every', None),
                 }
                 
                 lora_metadata = extract_lora_metadata(
@@ -2246,12 +2283,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.telemetry.log_control_change(old_log_every, new_log_every, "dashboard")
                     
                     # Log step metrics
+                    # compute sec_per_step from timer averages if available
+                    sec_per_step = None
+                    try:
+                        if hasattr(self, 'timer') and 'train_loop' in getattr(self.timer, 'timers', {}):
+                            timings = self.timer.timers['train_loop']
+                            if len(timings) > 0:
+                                sec_per_step = sum(timings) / len(timings)
+                    except Exception:
+                        sec_per_step = None
+
                     step_metrics = {
                         "train_loss": loss_dict.get("loss", 0.0),
                         "lr": learning_rate,
                         "grad_norm": getattr(self, '_last_grad_norm', None),
                         "samples_per_sec": getattr(self, '_samples_per_sec', None),
-                        "sec_per_step": self.timer.get_time('train_loop') if hasattr(self, 'timer') else None,
+                        "sec_per_step": sec_per_step,
                     }
                     # Add any additional loss components
                     for key, value in loss_dict.items():

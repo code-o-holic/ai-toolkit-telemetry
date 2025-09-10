@@ -353,8 +353,8 @@ class TelemetryLogger:
 
 def get_run_name(config: Dict[str, Any]) -> str:
     """Generate run name from config or timestamp."""
-    # Try to get name from config
-    name = config.get('name')
+    # Prefer the training/LORA name if present
+    name = config.get('config', {}).get('name') or config.get('name')
     if name:
         return name
     
