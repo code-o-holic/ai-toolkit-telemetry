@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, LineChart } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
@@ -57,6 +57,16 @@ export default function JobActionBar({ job, onRefresh, afterDelete, className, h
           <Eye />
         </Link>
       )}
+      {/* Open Streamlit metrics dashboard for this job */}
+      <Button
+        onClick={() => {
+          window.open(`/metrics?run=${encodeURIComponent(job.name)}`, '_blank');
+        }}
+        className="ml-2"
+        title="Open Metrics"
+      >
+        <LineChart />
+      </Button>
       {canEdit && (
         <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
           <Pen />

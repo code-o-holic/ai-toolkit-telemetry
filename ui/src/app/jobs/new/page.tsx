@@ -25,6 +25,7 @@ export default function TrainingForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const runId = searchParams.get('id');
+  const datasetIdentifier = searchParams.get('dataset');
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
   const { settings, isSettingsLoaded } = useSettings();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
@@ -52,6 +53,20 @@ export default function TrainingForm() {
       }
     }
   }, [datasets, settings, isSettingsLoaded, datasetFetchStatus]);
+
+  // If deep-linked from workflow with dataset identifier, try to select matching dataset
+  useEffect(() => {
+    if (!datasetIdentifier) return;
+    if (!isSettingsLoaded) return;
+    if (datasetFetchStatus !== 'success') return;
+    // If identifier equals a dataset folder name, prefill it
+    const option = datasets.find(name => name === datasetIdentifier);
+    if (option) {
+      const folderPath = path.join(settings.DATASETS_FOLDER, option);
+      // set into first dataset slot
+      setJobConfig(folderPath, `config.process[0].datasets[0].folder_path`);
+    }
+  }, [datasetIdentifier, datasets, settings, isSettingsLoaded, datasetFetchStatus]);
 
   useEffect(() => {
     if (runId) {

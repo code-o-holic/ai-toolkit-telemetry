@@ -108,6 +108,59 @@ export default function Settings() {
                     placeholder="Enter datasets folder path"
                   />
                 </div>
+
+                <div className="pt-4 border-t border-gray-800" />
+                <div className="text-sm font-semibold">Caption Provider (optional)</div>
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label htmlFor="CAPTION_PROVIDER" className="block text-sm font-medium mb-2">Provider</label>
+                    <input
+                      type="text"
+                      id="CAPTION_PROVIDER"
+                      name="CAPTION_PROVIDER"
+                      value={(settings as any).CAPTION_PROVIDER || ''}
+                      onChange={handleChange}
+                      className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                      placeholder="lmstudio | ollama | openai | anthropic"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="CAPTION_BASE_URL" className="block text-sm font-medium mb-2">Base URL</label>
+                    <input
+                      type="text"
+                      id="CAPTION_BASE_URL"
+                      name="CAPTION_BASE_URL"
+                      value={(settings as any).CAPTION_BASE_URL || ''}
+                      onChange={handleChange}
+                      className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                      placeholder="http://localhost:1234 (LM Studio/Ollama)"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="CAPTION_API_KEY" className="block text-sm font-medium mb-2">API Key</label>
+                    <input
+                      type="password"
+                      id="CAPTION_API_KEY"
+                      name="CAPTION_API_KEY"
+                      value={(settings as any).CAPTION_API_KEY || ''}
+                      onChange={handleChange}
+                      className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                      placeholder="Only for OpenAI/Anthropic or secured endpoints"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="CAPTION_MODEL" className="block text-sm font-medium mb-2">Model</label>
+                    <input
+                      type="text"
+                      id="CAPTION_MODEL"
+                      name="CAPTION_MODEL"
+                      value={(settings as any).CAPTION_MODEL || ''}
+                      onChange={handleChange}
+                      className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                      placeholder="e.g., llava, llama3.2-vision, gpt-4o-mini, claude-3.5-sonnet"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
