@@ -29,10 +29,10 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER } = body;
+    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, CAPTION_PROVIDER, CAPTION_BASE_URL, CAPTION_API_KEY, CAPTION_MODEL } = body as any;
 
     // Upsert both settings
-    await Promise.all([
+    const ops: any[] = [
       prisma.settings.upsert({
         where: { key: 'HF_TOKEN' },
         update: { value: HF_TOKEN },
@@ -48,7 +48,21 @@ export async function POST(request: Request) {
         update: { value: DATASETS_FOLDER },
         create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
       }),
-    ]);
+    ];
+    if (typeof CAPTION_PROVIDER !== 'undefined') {
+      ops.push(prisma.settings.upsert({ where: { key: 'CAPTION_PROVIDER' }, update: { value: CAPTION_PROVIDER }, create: { key: 'CAPTION_PROVIDER', value: CAPTION_PROVIDER } }));
+    }
+    if (typeof CAPTION_BASE_URL !== 'undefined') {
+      ops.push(prisma.settings.upsert({ where: { key: 'CAPTION_BASE_URL' }, update: { value: CAPTION_BASE_URL }, create: { key: 'CAPTION_BASE_URL', value: CAPTION_BASE_URL } }));
+    }
+    if (typeof CAPTION_API_KEY !== 'undefined') {
+      ops.push(prisma.settings.upsert({ where: { key: 'CAPTION_API_KEY' }, update: { value: CAPTION_API_KEY }, create: { key: 'CAPTION_API_KEY', value: CAPTION_API_KEY } }));
+    }
+    if (typeof CAPTION_MODEL !== 'undefined') {
+      ops.push(prisma.settings.upsert({ where: { key: 'CAPTION_MODEL' }, update: { value: CAPTION_MODEL }, create: { key: 'CAPTION_MODEL', value: CAPTION_MODEL } }));
+    }
+
+    await Promise.all(ops);
 
     flushCache();
 

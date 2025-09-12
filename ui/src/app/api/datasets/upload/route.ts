@@ -13,6 +13,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const files = formData.getAll('files');
     const datasetName = formData.get('datasetName') as string;
+    const renamePattern = (formData.get('renamePattern') as string) || '';
+    const conflictPolicy = (formData.get('conflictPolicy') as string) || 'skip';
 
     if (!files || files.length === 0) {
       return NextResponse.json({ error: 'No files provided' }, { status: 400 });
@@ -25,17 +27,37 @@ export async function POST(request: NextRequest) {
     const savedFiles: string[] = [];
     
     // Process files sequentially to avoid overwhelming the system
+    let counter = 0;
     for (let i = 0; i < files.length; i++) {
       const file = files[i] as any;
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
 
-      // Clean filename and ensure it's unique
-      const fileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const filePath = join(uploadDir, fileName);
+      // Build filename
+      const originalName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const ext = originalName.includes('.') ? `.${originalName.split('.').pop()}` : '';
+      let base = originalName.replace(new RegExp(`${ext}$`), '');
 
+      let targetName = originalName;
+      if (renamePattern) {
+        // Support patterns like img_{000}, outfit_###, prefix/suffix around ###
+        const padMatch = renamePattern.match(/(#+|\{0+,?\})/);
+        const padLen = padMatch ? (padMatch[0].includes('#') ? padMatch[0].length : (padMatch[0].match(/0/g)?.length || 3)) : 3;
+        const numberStr = String(counter + 1).padStart(padLen, '0');
+        targetName = renamePattern
+          .replace(/#+|\{0+,?\}/, numberStr)
+          .replace(/[^a-zA-Z0-9._-]/g, '_');
+        if (!targetName.endsWith(ext)) targetName = `${targetName}${ext}`;
+      }
+
+      let filePath = join(uploadDir, targetName);
+      if (conflictPolicy === 'skip' && savedFiles.includes(targetName)) {
+        counter++;
+        continue;
+      }
       await writeFile(filePath, buffer);
-      savedFiles.push(fileName);
+      savedFiles.push(targetName);
+      counter++;
     }
 
     return NextResponse.json({

@@ -7,6 +7,10 @@ export interface Settings {
   HF_TOKEN: string;
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
+  CAPTION_PROVIDER?: string;
+  CAPTION_BASE_URL?: string;
+  CAPTION_API_KEY?: string;
+  CAPTION_MODEL?: string;
 }
 
 export default function useSettings() {
@@ -14,6 +18,10 @@ export default function useSettings() {
     HF_TOKEN: '',
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
+    CAPTION_PROVIDER: '',
+    CAPTION_BASE_URL: '',
+    CAPTION_API_KEY: '',
+    CAPTION_MODEL: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
@@ -26,6 +34,10 @@ export default function useSettings() {
           HF_TOKEN: data.HF_TOKEN || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
+          CAPTION_PROVIDER: data.CAPTION_PROVIDER || '',
+          CAPTION_BASE_URL: data.CAPTION_BASE_URL || '',
+          CAPTION_API_KEY: data.CAPTION_API_KEY || '',
+          CAPTION_MODEL: data.CAPTION_MODEL || '',
         });
         setIsLoaded(true);
       })

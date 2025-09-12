@@ -2,26 +2,29 @@
 import { createGlobalState } from 'react-global-hooks';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaUpload } from 'react-icons/fa';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { apiClient } from '@/utils/api';
 
 export interface AddImagesModalState {
   datasetName: string;
+  renamePattern?: string;
+  conflictPolicy?: 'skip' | 'overwrite';
   onComplete?: () => void;
 }
 
 export const addImagesModalState = createGlobalState<AddImagesModalState | null>(null);
 
-export const openImagesModal = (datasetName: string, onComplete: () => void) => {
-  addImagesModalState.set({ datasetName, onComplete });
+export const openImagesModal = (datasetName: string, onComplete: () => void, opts?: { renamePattern?: string; conflictPolicy?: 'skip' | 'overwrite' }) => {
+  addImagesModalState.set({ datasetName, onComplete, renamePattern: opts?.renamePattern, conflictPolicy: opts?.conflictPolicy });
 };
 
 export default function AddImagesModal() {
   const [addImagesModalInfo, setAddImagesModalInfo] = addImagesModalState.use();
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [isUploading, setIsUploading] = useState<boolean>(false);
-  const open = addImagesModalInfo !== null;
+  const isOpen = addImagesModalInfo !== null;
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const onCancel = () => {
     if (!isUploading) {
@@ -48,6 +51,8 @@ export default function AddImagesModal() {
         formData.append('files', file);
       });
       formData.append('datasetName', addImagesModalInfo?.datasetName || '');
+      if (addImagesModalInfo?.renamePattern) formData.append('renamePattern', addImagesModalInfo.renamePattern);
+      if (addImagesModalInfo?.conflictPolicy) formData.append('conflictPolicy', addImagesModalInfo.conflictPolicy);
 
       try {
         await apiClient.post(`/api/datasets/upload`, formData, {
@@ -72,7 +77,7 @@ export default function AddImagesModal() {
     [addImagesModalInfo],
   );
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, open: openFileDialog } = useDropzone({
     onDrop,
     accept: {
       'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
@@ -80,10 +85,23 @@ export default function AddImagesModal() {
       'text/*': ['.txt'],
     },
     multiple: true,
+    noClick: true,
   });
 
+  const openFolderDialog = () => {
+    folderInputRef.current?.click();
+  };
+
+  const onFolderSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    await onDrop(files as any);
+    // reset input so re-selecting the same folder works
+    if (folderInputRef.current) folderInputRef.current.value = '';
+  };
+
   return (
-    <Dialog open={open} onClose={onCancel} className="relative z-10">
+    <Dialog open={isOpen} onClose={onCancel} className="relative z-10">
       <DialogBackdrop
         transition
         className="fixed inset-0 bg-gray-900/75 transition-opacity data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in"
@@ -135,6 +153,24 @@ export default function AddImagesModal() {
               </button>
               <button
                 type="button"
+                onClick={() => openFileDialog()}
+                disabled={isUploading}
+                className={`mt-3 inline-flex w-full justify-center rounded-md bg-gray-600 px-3 py-2 text-sm font-semibold text-gray-100 hover:bg-gray-500 sm:mt-0 sm:w-auto ring-0
+                  ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Select Files
+              </button>
+              <button
+                type="button"
+                onClick={openFolderDialog}
+                disabled={isUploading}
+                className={`mt-3 inline-flex w-full justify-center rounded-md bg-gray-600 px-3 py-2 text-sm font-semibold text-gray-100 hover:bg-gray-500 sm:mt-0 sm:w-auto ring-0
+                  ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Select Folder
+              </button>
+              <button
+                type="button"
                 data-autofocus
                 onClick={onCancel}
                 disabled={isUploading}
@@ -143,6 +179,18 @@ export default function AddImagesModal() {
               >
                 Cancel
               </button>
+              {/* Hidden input for directory selection */}
+              <input
+                ref={folderInputRef}
+                type="file"
+                style={{ display: 'none' }}
+                // @ts-ignore webkitdirectory not in TS lib
+                webkitdirectory="true"
+                // @ts-ignore
+                directory="true"
+                multiple
+                onChange={onFolderSelected}
+              />
             </div>
           </DialogPanel>
         </div>

@@ -1,13 +1,21 @@
 import Link from 'next/link';
-import { Home, Settings, BrainCircuit, Images, Plus} from 'lucide-react';
+import { Home, Settings, BrainCircuit, Images, Plus, ListChecks, Type, Lock, Play, LineChart } from 'lucide-react';
 import { FaXTwitter, FaDiscord, FaYoutube } from "react-icons/fa6";
 
 const Sidebar = () => {
-  const navigation = [
+  const workflowNav = [
+    { name: 'Prepare Dataset', href: '/workflow/step1-upload', icon: ListChecks },
+    { name: 'Caption', href: '/workflow/step2-caption', icon: Type },
+    { name: 'Review & Lock', href: '/workflow/step3-review', icon: Lock },
+    { name: 'Configure & Train', href: '/workflow/step4-train', icon: Play },
+  ];
+
+  const manageNav = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
     { name: 'New Job', href: '/jobs/new', icon: Plus },
     { name: 'Training Jobs', href: '/jobs', icon: BrainCircuit },
     { name: 'Datasets', href: '/datasets', icon: Images },
+    { name: 'Metrics', href: '/metrics', icon: LineChart },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 
@@ -24,8 +32,24 @@ const Sidebar = () => {
         </h1>
       </div>
       <nav className="flex-1">
-        <ul className="px-2 py-4 space-y-2">
-          {navigation.map(item => (
+        <div className="px-3 py-2 text-xs uppercase tracking-wide text-gray-400">Workflow</div>
+        <ul className="px-2 space-y-2">
+          {workflowNav.map(item => (
+            <li key={item.name}>
+              <Link
+                href={item.href}
+                className="flex items-center px-4 py-2 text-gray-200 hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                <item.icon className="w-5 h-5 mr-3" />
+                {item.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+
+        <div className="px-3 py-3 text-xs uppercase tracking-wide text-gray-400">Management</div>
+        <ul className="px-2 space-y-2">
+          {manageNav.map(item => (
             <li key={item.name}>
               <Link
                 href={item.href}
