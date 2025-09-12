@@ -24,6 +24,7 @@ export default function MetricsPage() {
   const [data, setData] = useState<any[]>([]);
   const [overlayData, setOverlayData] = useState<Record<string, any[]>>({});
   const [startMeta, setStartMeta] = useState<any | null>(null);
+  const [trainingFolder, setTrainingFolder] = useState<string>('');
 
   useEffect(() => {
     apiClient.get('/api/metrics/runs').then(r => {
@@ -33,6 +34,10 @@ export default function MetricsPage() {
       const names = (r.data?.runs || []).map((x: RunInfo) => x.name);
       if (qRun && names.includes(qRun)) setPrimary(qRun);
       else if (names.length) setPrimary(names[0]);
+    });
+    // fetch settings for TRAINING_FOLDER to resolve samples dir fallback
+    apiClient.get('/api/settings').then(r => {
+      if (r.data?.TRAINING_FOLDER) setTrainingFolder(r.data.TRAINING_FOLDER);
     });
   }, []);
 
@@ -135,7 +140,7 @@ export default function MetricsPage() {
                 <MetricLine data={steps} field="samples_per_sec" overlays={overlayData} primaryName={primary} useSmoothing={false} logScale={logSpeed} paletteName={palette} reverse={reverse} />
               </div>
             </div>
-            <SamplesTimeline data={data} startMeta={startMeta} promptIndex={promptIndex} setPromptIndex={setPromptIndex} title="Samples Timeline" />
+            <SamplesTimeline data={data} startMeta={startMeta} runName={primary} trainingFolder={trainingFolder} promptIndex={promptIndex} setPromptIndex={setPromptIndex} title="Samples Timeline" />
           </div>
         </div>
       </MainContent>
@@ -154,17 +159,123 @@ function MetricLine({ data, field, overlays, primaryName, useSmoothing, logScale
   const primaryPtsRaw = (data || []).filter(d => d && typeof d[field] !== 'undefined').map(d => ({ x: d.global_step || 0, y: d[field] }));
   const primaryPts = useSmoothing ? smoothPoints(primaryPtsRaw) : primaryPtsRaw;
   const colors = getPalette(paletteName, reverse);
+
+  // Domains and interactions
+  const pad = 36; // padding for axes
+  const width = 800;
+  const height = 220;
+  const innerW = width - pad * 2;
+  const innerH = height - pad * 2;
+
+  const xsAll = primaryPts.map(p=>p.x);
+  const ysAll = primaryPts.map(p=>Number(p.y)||0);
+  const minXAll = xsAll.length?Math.min(...xsAll):0;
+  const maxXAll = xsAll.length?Math.max(...xsAll):1;
+  let minYAll = ysAll.length?Math.min(...ysAll):0;
+  let maxYAll = ysAll.length?Math.max(...ysAll):1;
+  if (logScale) {
+    const safe = ysAll.map(v=>v<=0? Number.MIN_VALUE : v);
+    minYAll = safe.length?Math.min(...safe):Number.MIN_VALUE;
+    maxYAll = safe.length?Math.max(...safe):1;
+  }
+
+  const [xDomain, setXDomain] = useState<[number, number]>([minXAll, maxXAll]);
+  const [yDomain, setYDomain] = useState<[number, number]>([minYAll, maxYAll]);
+  useEffect(()=>{ setXDomain([minXAll, maxXAll]); setYDomain([minYAll, maxYAll]); }, [minXAll,maxXAll,minYAll,maxYAll,logScale]);
+
+  const scaleX = (x:number) => (xDomain[1]===xDomain[0]?0:((x - xDomain[0])/(xDomain[1]-xDomain[0]))*innerW)+pad;
+  const invX = (px:number) => xDomain[0] + ((px-pad)/innerW)*(xDomain[1]-xDomain[0]);
+  const scaleY = (y:number) => {
+    if (logScale) {
+      const vy = y<=0? Number.MIN_VALUE : y;
+      const minL = Math.log(yDomain[0]);
+      const maxL = Math.log(yDomain[1]);
+      const yL = Math.log(vy);
+      const t = maxL===minL ? 0.5 : (yL - minL) / (maxL - minL);
+      return height - pad - t*innerH;
+    }
+    return height - pad - (yDomain[1]===yDomain[0]?0:((y - yDomain[0])/(yDomain[1]-yDomain[0]))*innerH);
+  };
+
+  const toPoints = (pts:{x:number;y:number}[]) => pts.map(p=>`${scaleX(p.x)},${scaleY(Number(p.y)||0)}`).join(' ');
+
+  // Ticks
+  const xTicks = niceTicks(xDomain[0], xDomain[1], 6);
+  const yTicks = niceTicks(yDomain[0], yDomain[1], 5, logScale);
+
+  // Hover & zoom/pan
+  const [hover, setHover] = useState<{x:number;y:number;nearest?:{x:number;y:number}}|null>(null);
+  const [drag, setDrag] = useState<{startX:number; lastX:number}|null>(null);
+  const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const factor = e.deltaY<0 ? 0.9 : 1.1;
+    const rect = (e.target as SVGElement).getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const cx = invX(mx);
+    const [a,b] = xDomain;
+    const na = cx + (a-cx)*factor;
+    const nb = cx + (b-cx)*factor;
+    if (nb-na > 1e-9) setXDomain([na, nb]);
+  };
+  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = (e.target as SVGElement).getBoundingClientRect();
+    const mx = e.clientX - rect.left; const my = e.clientY - rect.top;
+    const dataX = invX(mx);
+    const nearest = nearestPoint(primaryPts, dataX);
+    setHover({ x: mx, y: my, nearest });
+    if (drag) {
+      const dx = mx - drag.lastX;
+      const dData = (dx/innerW)*(xDomain[1]-xDomain[0]);
+      setXDomain([xDomain[0]-dData, xDomain[1]-dData]);
+      setDrag({ startX: drag.startX, lastX: mx });
+    }
+  };
+  const onMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = (e.target as SVGElement).getBoundingClientRect();
+    const mx = e.clientX - rect.left; setDrag({ startX: mx, lastX: mx });
+  };
+  const onMouseUp = () => setDrag(null);
+  const onMouseLeave = () => { setHover(null); setDrag(null); };
+
   return (
     <div className="w-full bg-gray-900 rounded p-2 border border-gray-800">
-      <svg className="w-full h-48">
-        <polyline fill="none" stroke={colors[0]} strokeWidth="2" points={toPolyline(primaryPts, logScale)} />
+      <svg className="w-full h-56" viewBox={`0 0 ${width} ${height}`} onWheel={onWheel} onMouseMove={onMouseMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseLeave}>
+        {/* Axes */}
+        <line x1={pad} y1={height-pad} x2={width-pad} y2={height-pad} stroke="#374151" strokeWidth="1" />
+        <line x1={pad} y1={pad} x2={pad} y2={height-pad} stroke="#374151" strokeWidth="1" />
+        {xTicks.map((t,i)=> (
+          <g key={i}>
+            <line x1={scaleX(t)} y1={height-pad} x2={scaleX(t)} y2={height-pad+4} stroke="#4b5563" />
+            <text x={scaleX(t)} y={height-pad+14} fill="#9ca3af" fontSize="10" textAnchor="middle">{formatTick(t)}</text>
+          </g>
+        ))}
+        {yTicks.map((t,i)=> (
+          <g key={i}>
+            <line x1={pad-4} y1={scaleY(t)} x2={pad} y2={scaleY(t)} stroke="#4b5563" />
+            <text x={pad-6} y={scaleY(t)+3} fill="#9ca3af" fontSize="10" textAnchor="end">{formatTick(t)}</text>
+            <line x1={pad} y1={scaleY(t)} x2={width-pad} y2={scaleY(t)} stroke="#111827" opacity="0.4" />
+          </g>
+        ))}
+
+        {/* Series */}
+        <polyline fill="none" stroke={colors[0]} strokeWidth="2" points={toPoints(primaryPts)} />
         {Object.entries(overlays).map(([name, arr], idx) => {
           const ptsRaw = (arr || []).filter(e => e.event === 'step' && typeof (e as any)[field] !== 'undefined').map(e => ({ x: e.global_step || 0, y: (e as any)[field] }));
           const pts = useSmoothing ? smoothPoints(ptsRaw) : ptsRaw;
           const color = colors[(idx+1)%colors.length];
-          return <polyline key={name} fill="none" stroke={color} strokeWidth="1.5" opacity="0.7" points={toPolyline(pts, logScale)} />
+          return <polyline key={name} fill="none" stroke={color} strokeWidth="1.5" opacity="0.7" points={toPoints(pts)} />
         })}
+
+        {/* Hover */}
+        {hover?.nearest && (
+          <g>
+            <circle cx={scaleX(hover.nearest.x)} cy={scaleY(Number(hover.nearest.y)||0)} r={3} fill="#f59e0b" />
+            <rect x={scaleX(hover.nearest.x)+6} y={scaleY(Number(hover.nearest.y)||0)-18} width="120" height="16" fill="#111827" stroke="#374151" />
+            <text x={scaleX(hover.nearest.x)+10} y={scaleY(Number(hover.nearest.y)||0)-6} fill="#e5e7eb" fontSize="10">{`step ${formatTick(hover.nearest.x)}  y ${formatTick(Number(hover.nearest.y)||0)}`}</text>
+          </g>
+        )}
       </svg>
+      <div className="text-[10px] text-gray-500 mt-1">Scroll to zoom X. Drag to pan.</div>
     </div>
   );
 }
@@ -175,35 +286,31 @@ function smoothPoints(points: { x:number;y:number }[]): { x:number;y:number }[] 
   return points.map((p,i)=>({ x:p.x, y: sm[i] }));
 }
 
-function toPolyline(points: { x: number; y: number }[], logScale=false): string {
-  if (!points.length) return '';
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => (typeof p.y === 'number' ? p.y : 0));
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  let minY = Math.min(...ys);
-  let maxY = Math.max(...ys);
-  if (logScale) {
-    const safe = ys.map(v => (v<=0? Number.MIN_VALUE : v));
-    minY = Math.min(...safe);
-    maxY = Math.max(...safe);
+function niceTicks(min:number, max:number, count:number, log=false): number[] {
+  if (!isFinite(min) || !isFinite(max)) return [];
+  if (min===max) return [min];
+  if (log) {
+    const minL = Math.log(min<=0? Number.MIN_VALUE : min);
+    const maxL = Math.log(max<=0? 1 : max);
+    const step = (maxL-minL)/Math.max(1,count-1);
+    return Array.from({length:count},(_,i)=>Math.exp(minL + step*i));
   }
-  const pad = 8;
-  const width = 800 - pad * 2;
-  const height = 180 - pad * 2;
-  const scaleX = (x: number) => (maxX === minX ? 0 : ((x - minX) / (maxX - minX)) * width) + pad;
-  const scaleY = (y: number) => {
-    if (logScale) {
-      const vy = y<=0? Number.MIN_VALUE : y;
-      const minL = Math.log(minY);
-      const maxL = Math.log(maxY);
-      const yL = Math.log(vy);
-      const t = maxL===minL ? 0.5 : (yL - minL) / (maxL - minL);
-      return height - t*height + pad;
-    }
-    return (maxY === minY ? height / 2 : height - ((y - minY) / (maxY - minY)) * height) + pad;
-  };
-  return points.map(p => `${scaleX(p.x)},${scaleY(p.y)}`).join(' ');
+  const step = (max-min)/Math.max(1,count-1);
+  return Array.from({length:count},(_,i)=>min + step*i);
+}
+
+function formatTick(v:number): string { 
+  const a = Math.abs(v);
+  if (a>=1000 || (a>0 && a<0.001)) return v.toExponential(2);
+  if (a>=1) return v.toFixed(2);
+  return v.toPrecision(2);
+}
+
+function nearestPoint(pts:{x:number;y:number}[], x:number): {x:number;y:number} | undefined {
+  if (!pts.length) return undefined;
+  let best = pts[0]; let bestD = Math.abs(pts[0].x - x);
+  for (let i=1;i<pts.length;i++){ const d = Math.abs(pts[i].x - x); if (d<bestD){ best=pts[i]; bestD=d; } }
+  return best;
 }
 
 function getPalette(name: string, reverse=false): string[] {
@@ -223,11 +330,21 @@ function getPalette(name: string, reverse=false): string[] {
   return reverse ? [...arr].reverse() : arr;
 }
 
-function SamplesTimeline({ data, startMeta, promptIndex, setPromptIndex, title }: { data: any[]; startMeta: any; promptIndex: number; setPromptIndex: (i:number)=>void; title: string }) {
+function SamplesTimeline({ data, startMeta, runName, trainingFolder, promptIndex, setPromptIndex, title }: { data: any[]; startMeta: any; runName: string; trainingFolder: string; promptIndex: number; setPromptIndex: (i:number)=>void; title: string }) {
   const sampleEvents = (data||[]).filter((e:any)=>e?.event==='sample');
   const prompts: string[] = (startMeta?.sample_prompts || []) as string[];
-  const samplesDir = startMeta?.samples_dir as string | undefined;
-  const mapping = useMemo(()=>buildStepToPathFromEventsAndDir(sampleEvents, samplesDir, promptIndex), [JSON.stringify(sampleEvents), samplesDir, promptIndex]);
+  const samplesDir = (startMeta?.samples_dir as string | undefined) || (trainingFolder && runName ? `${trainingFolder.replace(/\\+$/,'')}/${runName}/samples` : undefined);
+  const [fallbackFiles, setFallbackFiles] = useState<string[]>([] as string[]);
+  useEffect(() => {
+    // fallback scan when no event paths present
+    const hasEventPaths = sampleEvents.some(ev => (ev?.items||[]).some((it:any)=>!!it?.path));
+    if (!hasEventPaths && samplesDir) {
+      apiClient.get('/api/files/list', { params: { dir: samplesDir } }).then(res => setFallbackFiles(res.data?.files||[])).catch(()=>setFallbackFiles([]));
+    } else {
+      setFallbackFiles([]);
+    }
+  }, [JSON.stringify(sampleEvents), samplesDir]);
+  const mapping = useMemo(()=>buildStepToPathFromEventsAndDir(sampleEvents, samplesDir, promptIndex, fallbackFiles), [JSON.stringify(sampleEvents), samplesDir, promptIndex, JSON.stringify(fallbackFiles)]);
   const orderedSteps = Object.keys(mapping).map(k=>parseInt(k)).sort((a,b)=>a-b);
   const thumbs: string[] = orderedSteps.map(step => mapping[step]);
   const cols = 6;
@@ -256,13 +373,26 @@ function SamplesTimeline({ data, startMeta, promptIndex, setPromptIndex, title }
   );
 }
 
-function buildStepToPathFromEventsAndDir(sampleEvents: any[], sdir?: string, prompt_index=0): Record<number,string> {
+function buildStepToPathFromEventsAndDir(sampleEvents: any[], sdir?: string, prompt_index=0, fallbackFiles: string[] = []): Record<number,string> {
   const mapping: Record<number,string> = {};
   for (const ev of sampleEvents) {
     const step = ev?.global_step;
     for (const item of (ev?.items || [])) {
       if (item?.prompt_index === prompt_index && item?.path) mapping[step] = item.path;
     }
+  }
+  if (!Object.keys(mapping).length && sdir && fallbackFiles.length) {
+    try {
+      const re = /__([0-9]{1,9})_([0-9]+)\.(jpg|jpeg|png|webp)$/i;
+      for (const p of fallbackFiles) {
+        const fname = p.split(/\\\//).pop() as string;
+        const m = fname.match(re);
+        if (!m) continue;
+        const stepVal = parseInt(m[1]);
+        const idxVal = parseInt(m[2]);
+        if (idxVal === prompt_index) mapping[stepVal] = p;
+      }
+    } catch {}
   }
   return mapping;
 }
